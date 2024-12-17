@@ -77,7 +77,7 @@ def process_data(data : str, nlp, model) -> tuple:
 
     """
 
-    data = Path('data')
+    data = Path(data)
     txt_paths = list(data.glob('**/*.txt'))
     print(f'{len(txt_paths)} contracts in the corpus.')
     embeddings, metadata = [], []
@@ -152,7 +152,9 @@ def negative_closest_to_zero(lst):
 
     return closest_negative
 
-def convergence(metadata, embeddings, platform_t,platform_c):
+def convergence(metadata, embeddings, platform_t,platform_c, threshold=.9):
+    """
+    """
     dates_t = sorted(metadata[metadata.platform==platform_t].date.unique())
     dates_c = sorted(metadata[metadata.platform==platform_c].date.unique())
     resultdict = defaultdict(dict)
@@ -170,7 +172,7 @@ def convergence(metadata, embeddings, platform_t,platform_c):
             x = np.apply_along_axis(np.max,0,mult)
             resultdict[d]['date'] = d
             resultdict[d]['mean'] = np.mean(x)
-            resultdict[d]['similar'] = len(x[x > .9]) / len(x)
+            resultdict[d]['similar'] = len(x[x > threshold]) / len(x)
             resultdict[d]['matrix'] = mult
 
     return pd.DataFrame(resultdict).T
