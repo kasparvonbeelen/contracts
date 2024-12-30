@@ -7,6 +7,27 @@ import pandas as pd
 import numpy as np
 import re
 
+
+
+def generate_response(prompt,client,model='gpt-4o-mini', max_tokens=100,temperature=.0):
+    # Generate a response using OpenAI ChatGPT
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=max_tokens,
+        temperature=temperature,
+        n=1,
+        stop=None,
+        timeout=10
+    )
+
+    # Extract the generated response from the API response
+    #generated_response = response.choices[0].text.strip()
+
+    return response.choices[0].message.content
+
+
+
 def parse_filename(fn: str) -> tuple:
     """function for processing the filename of the input text files
     
