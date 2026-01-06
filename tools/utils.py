@@ -7,6 +7,27 @@ import pandas as pd
 import numpy as np
 import re
 
+
+
+def generate_response(prompt,client,model='gpt-4o', max_tokens=100,temperature=.0):
+    # Generate a response using OpenAI ChatGPT
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=max_tokens,
+        temperature=temperature,
+        n=1,
+        stop=None,
+        timeout=10
+    )
+
+    # Extract the generated response from the API response
+    #generated_response = response.choices[0].text.strip()
+
+    return response.choices[0].message.content
+
+
+
 def parse_filename(fn: str) -> tuple:
     """function for processing the filename of the input text files
     
@@ -77,7 +98,7 @@ def process_data(data : str, nlp, model) -> tuple:
 
     """
 
-    data = Path('data')
+    data = Path(data)
     txt_paths = list(data.glob('**/*.txt'))
     print(f'{len(txt_paths)} contracts in the corpus.')
     embeddings, metadata = [], []
@@ -91,16 +112,17 @@ def process_data(data : str, nlp, model) -> tuple:
         
         for sentence  in doc.sents:
             if len(str(sentence)) < 10: continue
-
-            sentence = replace_named_entities(sentence) # remove named entities
-            sentence = sentence.lower().replace(platform.lower(),'[mask]') # make double sure the platform name is masked    
-            sentence = remove_urls(sentence) # remove urls
-            metadata.append([platform,year,sentence])
+            
+            sentence_processed = replace_named_entities(sentence) # remove named entities
+            sentence_processed = sentence_processed.lower().replace(platform.lower(),'[mask]') # make double sure the platform name is masked    
+            sentence_processed = remove_urls(sentence_processed) # remove urls
+            metadata.append([platform,year,sentence,sentence_processed])
+            sentence = remove_urls(str(sentence)) # remove urls
+            sentence_processed = remove_urls(sentence_processed) # remove urls
             embeddings.append(model.encode("clustering:  " + sentence))
 
-    df = pd.DataFrame(metadata, columns=['platform','year','sentence'])    
+    df = pd.DataFrame(metadata, columns=['platform','year','sentence','sentence_processed'])
     print(f'Embedded {len(df)} sentences...')
-   
     return embeddings, df
 
 
@@ -116,14 +138,14 @@ def get_timeline(metadata, embeddings, platform, threshold):
         idx_1 = list(metadata[(metadata.platform==platform) & (metadata.year ==year_1)].index)
         idx_2 = list(metadata[(metadata.platform==platform) & (metadata.year ==year_2)].index)
         mult = 1 - sp.distance.cdist(embeddings[idx_1,:], embeddings[idx_2,:], 'cosine')
-        x = np.apply_along_axis(np.max,0,mult)
-        y = np.apply_along_axis(np.max,1,mult)
+        y = np.apply_along_axis(np.max,0,mult)
+        x = np.apply_along_axis(np.max,1,mult)
         
         resultdict[year_2_dt]['copied'] = len(np.where(y >= threshold)[0])
         resultdict[year_2_dt]['deletions'] = len(np.where(x < threshold)[0])
         resultdict[year_2_dt]['additions'] = len(np.where(y < threshold)[0])
-        resultdict[year_2_dt]['length'] = len(y)
-        resultdict[year_2_dt]['length_t_min_1'] = len(x)
+        resultdict[year_2_dt]['length'] = len(idx_2)
+        resultdict[year_2_dt]['length_t_min_1'] = len(idx_1)
         resultdict[year_2_dt]['future_projection'] = x
         resultdict[year_2_dt]['past_projection'] = y
         resultdict[year_2_dt]['matrix'] = mult
@@ -152,7 +174,9 @@ def negative_closest_to_zero(lst):
 
     return closest_negative
 
-def convergence(metadata, embeddings, platform_t,platform_c):
+def convergence(metadata, embeddings, platform_t,platform_c, threshold=.9):
+    """
+    """
     dates_t = sorted(metadata[metadata.platform==platform_t].date.unique())
     dates_c = sorted(metadata[metadata.platform==platform_c].date.unique())
     resultdict = defaultdict(dict)
@@ -170,7 +194,66 @@ def convergence(metadata, embeddings, platform_t,platform_c):
             x = np.apply_along_axis(np.max,0,mult)
             resultdict[d]['date'] = d
             resultdict[d]['mean'] = np.mean(x)
-            resultdict[d]['similar'] = len(x[x > .9]) / len(x)
+            resultdict[d]['similar'] = len(x[x > threshold]) / len(x)
             resultdict[d]['matrix'] = mult
 
     return pd.DataFrame(resultdict).T
+
+
+def replace_minus_ones_with_prev(X, axis=1, inplace=False):
+    """
+    Replace -1 entries in a matrix/array with the nearest preceding 0 or 1 along the given axis.
+    If there is no preceding non -1 value, the -1 is left unchanged.
+
+    Parameters:
+    - X: array-like (numpy array, list of lists, or pandas DataFrame)
+    - axis: 1 to replace along rows (left-to-right), 0 to replace along columns (top-to-bottom)
+    - inplace: if True and X is a numpy array or DataFrame, modify it in place; otherwise return a new array
+
+    Returns:
+    - numpy.ndarray or pandas.DataFrame with replacements applied (unless inplace=True modifies input)
+    """
+
+
+    is_df = pd is not None and isinstance(X, pd.DataFrame)
+    if is_df:
+        arr = X.values
+    else:
+        arr = X if isinstance(X, (np.ndarray,)) else np.array(X)
+
+    if not inplace:
+        arr = arr.copy()
+
+    if axis not in (0, 1):
+        raise ValueError("axis must be 0 or 1")
+
+    # iterate over the chosen axis and carry forward the last seen non -1 value
+    if axis == 1:
+        # rows
+        for r in range(arr.shape[0]):
+            last = None
+            for c in range(arr.shape[1]):
+                val = arr[r, c]
+                if val != -1:
+                    last = val
+                elif last is not None:
+                    arr[r, c] = last
+    else:
+        # columns
+        for c in range(arr.shape[1]):
+            last = None
+            for r in range(arr.shape[0]):
+                val = arr[r, c]
+                if val != -1:
+                    last = val
+                elif last is not None:
+                    arr[r, c] = last
+
+    if is_df:
+        if inplace:
+            X.iloc[:, :] = arr
+            return X
+        else:
+            return pd.DataFrame(arr, index=X.index, columns=X.columns)
+    else:
+        return arr

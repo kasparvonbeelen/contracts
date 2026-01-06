@@ -163,3 +163,14 @@ cython_debug/
 
 data/*
 processed_data/*
+annotations/*
+scraping_model/*
+*_model/*
+
+multigenre_data/*
+tous_data/*
+sent_sim_eval/*
+models/*
+results/*
+figures/*
+api_key.json
