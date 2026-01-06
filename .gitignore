@@ -174,3 +174,4 @@ models/*
 results/*
 figures/*
 api_key.json
+.DS_Store
