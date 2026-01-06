@@ -171,3 +171,6 @@ multigenre_data/*
 tous_data/*
 sent_sim_eval/*
 models/*
+results/*
+figures/*
+api_key.json
