@@ -114,12 +114,12 @@ def process_data(data : str, nlp, model) -> tuple:
             if len(str(sentence)) < 10: continue
             
             sentence_processed = replace_named_entities(sentence) # remove named entities
-            sentence_processed = sentence_processed.lower().replace(platform.lower(),'[mask]') # make double sure the platform name is masked    
+            #sentence_processed = sentence_processed.lower().replace(platform.lower(),'[mask]') # make double sure the platform name is masked    
+            sentence_processed = re.sub(rf"\b{platform.lower()}\b", '[mask]', sentence_processed) # make double sure the platform name is masked using regex
             sentence_processed = remove_urls(sentence_processed) # remove urls
             metadata.append([platform,year,sentence,sentence_processed])
             sentence = remove_urls(str(sentence)) # remove urls
-            sentence_processed = remove_urls(sentence_processed) # remove urls
-            embeddings.append(model.encode("clustering:  " + sentence))
+            embeddings.append(model.encode("clustering:  " + sentence.lower()))
 
     df = pd.DataFrame(metadata, columns=['platform','year','sentence','sentence_processed'])
     print(f'Embedded {len(df)} sentences...')
@@ -146,6 +146,7 @@ def get_timeline(metadata, embeddings, platform, threshold):
         resultdict[year_2_dt]['additions'] = len(np.where(y < threshold)[0])
         resultdict[year_2_dt]['length'] = len(idx_2)
         resultdict[year_2_dt]['length_t_min_1'] = len(idx_1)
+        resultdict[year_2_dt]['length_diff'] = len(idx_2) - len(idx_1)
         resultdict[year_2_dt]['future_projection'] = x
         resultdict[year_2_dt]['past_projection'] = y
         resultdict[year_2_dt]['matrix'] = mult
@@ -157,6 +158,7 @@ def get_timeline(metadata, embeddings, platform, threshold):
 def compare_timelines(metadata, embeddings,platforms, threshold):
     result_df = pd.concat([get_timeline(metadata, embeddings, p, threshold) for p in platforms])
     result_df['rel_copied'] = result_df['copied'] / result_df['length']
+    result_df['rel_added'] = result_df['length_diff'] / result_df['length']
     result_df['rel_additions'] = result_df['additions'] / result_df['length']
     result_df['rel_deletions'] = result_df['deletions'] / result_df['length_t_min_1']
     return result_df
@@ -193,6 +195,7 @@ def convergence(metadata, embeddings, platform_t,platform_c, threshold=.9):
             mult = 1 - sp.distance.cdist(embeddings[idx_1,:], embeddings[idx_2,:], 'cosine')
             x = np.apply_along_axis(np.max,0,mult)
             resultdict[d]['date'] = d
+            resultdict[d]['date_gap'] = abs(days)
             resultdict[d]['mean'] = np.mean(x)
             resultdict[d]['similar'] = len(x[x > threshold]) / len(x)
             resultdict[d]['matrix'] = mult
