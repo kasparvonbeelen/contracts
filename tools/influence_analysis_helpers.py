@@ -467,6 +467,124 @@ def visualize_sentence_similarity_timeline(sentence_idx, nodes_df, emb_norm, min
     return fig, results
 
 
+def visualize_sentence_causal_timeline(sentence_idx, nodes_df, emb_norm, influence_edges_df, min_similarity=0.80):
+    """
+    Visualize only causally valid adoptions from a root sentence.
+
+    A target sentence is shown only if there is an edge source=sentence_idx -> target
+    in influence_edges_df. Similarity is recomputed from emb_norm for display/filtering.
+    Returns figure and results dataframe.
+    """
+    if sentence_idx < 0 or sentence_idx >= len(nodes_df):
+        return None, None
+
+    if influence_edges_df is None or len(influence_edges_df) == 0:
+        return None, pd.DataFrame()
+
+    root_row = nodes_df.iloc[sentence_idx]
+    root_embedding = emb_norm[sentence_idx]
+    root_platform = root_row["platform"]
+    root_year = int(root_row["year"])
+    root_sentence = root_row["sentence"]
+
+    outgoing = influence_edges_df[influence_edges_df["source"] == sentence_idx].copy()
+    if outgoing.empty:
+        return None, pd.DataFrame()
+
+    candidate_ids = outgoing["target"].astype(int).tolist()
+    candidate_df = nodes_df.iloc[candidate_ids].copy()
+    candidate_df["similarity"] = emb_norm[candidate_ids] @ root_embedding
+    candidate_df = candidate_df[candidate_df["similarity"] >= min_similarity].copy()
+
+    if candidate_df.empty:
+        return None, candidate_df
+
+    candidate_df = candidate_df.sort_values(["year", "similarity"], ascending=[True, False]).reset_index(drop=True)
+
+    fig = go.Figure()
+
+    platforms_in_data = sorted(candidate_df["platform"].unique().tolist())
+    palette = sns.color_palette("husl", n_colors=max(1, len(platforms_in_data)))
+    color_map = {
+        p: f"rgba({int(palette[i][0] * 255)}, {int(palette[i][1] * 255)}, {int(palette[i][2] * 255)}, 0.80)"
+        for i, p in enumerate(platforms_in_data)
+    }
+
+    fig.add_trace(go.Scatter(
+        x=[root_year],
+        y=[1.0],
+        mode="markers",
+        marker=dict(size=15, color="#FF4444", symbol="star", line=dict(color="white", width=2)),
+        name="Root",
+        hovertext=f"<b>ROOT</b><br>{root_platform.upper()} ({root_year})<br>Similarity: 1.000<br><br>{root_sentence[:180]}",
+        hoverinfo="text",
+        showlegend=True,
+    ))
+
+    for platform in platforms_in_data:
+        platform_data = candidate_df[candidate_df["platform"] == platform]
+
+        fig.add_trace(go.Scatter(
+            x=platform_data["year"],
+            y=platform_data["similarity"],
+            mode="markers",
+            marker=dict(
+                size=7 + platform_data["similarity"] * 10,
+                color=color_map[platform],
+                line=dict(color="white", width=1),
+                opacity=0.9,
+            ),
+            name=platform,
+            hovertext=[
+                f"<b>{p}</b> ({int(y)})<br>Causal edge from root: Yes<br>Similarity: {sim:.3f}<br><br>{sent[:200]}"
+                for p, y, sim, sent in zip(
+                    platform_data["platform"],
+                    platform_data["year"],
+                    platform_data["similarity"],
+                    platform_data["sentence"],
+                )
+            ],
+            hoverinfo="text",
+        ))
+
+    line_x = []
+    line_y = []
+    for _, row in candidate_df.iterrows():
+        line_x.extend([root_year, int(row["year"]), None])
+        line_y.extend([1.0, float(row["similarity"]), None])
+
+    fig.add_trace(go.Scatter(
+        x=line_x,
+        y=line_y,
+        mode="lines",
+        line=dict(color="rgba(120,120,120,0.25)", width=1),
+        hoverinfo="skip",
+        showlegend=False,
+    ))
+
+    fig.add_hline(
+        y=min_similarity,
+        line_dash="dash",
+        line_color="rgba(150,150,150,0.4)",
+        annotation_text=f"Min: {min_similarity:.2f}",
+        annotation_position="right",
+    )
+
+    fig.update_layout(
+        title=f"<b>Causal Adoption Timeline: {root_platform.upper()} ({root_year})</b><br><sub>Only targets with valid first-occurrence influence edges from the root are shown.</sub>",
+        xaxis_title="Year",
+        yaxis_title="Cosine Similarity",
+        height=600,
+        width=1200,
+        hovermode="closest",
+        plot_bgcolor="rgba(245, 245, 250, 0.9)",
+        xaxis=dict(showgrid=True, gridwidth=1, gridcolor="rgba(200,200,200,0.2)"),
+        yaxis=dict(range=[max(0.0, min_similarity - 0.02), 1.02], showgrid=True, gridwidth=1, gridcolor="rgba(200,200,200,0.2)"),
+    )
+
+    return fig, candidate_df
+
+
 def _check_temporal_direction(df, name):
     if df is None or len(df) == 0:
         print(f"{name}: empty")
