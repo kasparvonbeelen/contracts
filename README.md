@@ -1,8 +1,21 @@
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/kasparvonbeelen/contracts/blob/main/influence_explore.ipynb)
 
-# contracts
-Code for analysing text reuse in terms of use
+# Plasticity
+Code for analysing plasticity and text reuse in terms of use
 
+## Plasticity Analysis Notebook
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/kasparvonbeelen/contracts/blob/main/3-1-influence_analysis.ipynb)
+
+
+This notebook analyzes how contract clauses spread across platforms over time, using clause embeddings and a directed influence network. It builds similarity-based links between clauses, combines cross-platform influence with within-platform carry-over, and computes a recursive influence score that attributes downstream impact back to original root clauses.
+
+The workflow then provides interactive exploration of influence chains, including:
+
+root-based recursive chain visualization
+node-level hover details with truncated sentence previews
+year-based left-to-right layouts
+platform-colored nodes for easier pattern recognition
+In addition to sentence-level analysis, the notebook aggregates influence at platform and year levels, highlights top influential clauses and platforms, and produces coordination views showing when platforms adopt similar language in the same period. It is designed for both quantitative scoring and interpretable visual inspection of clause diffusion dynamics.
 
 ## Plasticity Measures
 
