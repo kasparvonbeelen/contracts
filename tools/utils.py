@@ -2,10 +2,58 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from tqdm import tqdm
+from sentence_transformers import SentenceTransformer
 import scipy.spatial as sp
 import pandas as pd
 import numpy as np
 import re
+
+
+# Registry of supported embedding models. Each entry gives the HF repo id,
+# whether trust_remote_code is needed to load it, and the text prefix this
+# model expects for a symmetric clustering/similarity task (models that are
+# trained with task-instruction prefixes need this to get on-task embeddings).
+EMBEDDING_MODELS = {
+    "nomic-embed-text-v1.5": {
+        "repo_id": "nomic-ai/nomic-embed-text-v1.5",
+        "trust_remote_code": True,
+        "prefix": "clustering:  ",
+    },
+    "qwen3-embedding-0.6b": {
+        "repo_id": "Qwen/Qwen3-Embedding-0.6B",
+        "trust_remote_code": False,
+        "prefix": "",  # Qwen3-Embedding needs no prefix for document/corpus-side text
+    },
+    "embeddinggemma": {
+        "repo_id": "google/embeddinggemma-300m",
+        "trust_remote_code": False,
+        "prefix": "task: clustering | query: ",
+    },
+    "bge-large-en-v1.5": {
+        "repo_id": "BAAI/bge-large-en-v1.5",
+        "trust_remote_code": False,
+        "prefix": "",  # BGE needs no prefix for symmetric tasks (clustering/similarity); only retrieval queries take an instruction prefix
+    },
+}
+
+
+def load_embedding_model(name: str, device: str = "cpu"):
+    """Load a sentence-transformers embedding model by short name.
+
+    Arguments:
+        name: a key in EMBEDDING_MODELS, or a raw HF repo id for a model
+            not in the registry (loaded with trust_remote_code=False and
+            no text prefix)
+        device: torch device to move the model to
+
+    Returns:
+        tuple: (model, prefix) - the loaded SentenceTransformer and the
+        text prefix to prepend before encoding, per that model's convention
+    """
+    config = EMBEDDING_MODELS.get(name, {"repo_id": name, "trust_remote_code": False, "prefix": ""})
+    model = SentenceTransformer(config["repo_id"], trust_remote_code=config["trust_remote_code"])
+    model.to(device)
+    return model, config["prefix"]
 
 
 
@@ -81,18 +129,21 @@ def remove_urls(text):
     
     return cleaned_text
 
-def process_data(data : str, nlp, model) -> tuple:
+def process_data(data : str, nlp, model, prefix: str = "clustering:  ") -> tuple:
     """function for processing the input text data
     give a folder name it will read all the text files and the folder names
     for each text file it will read the text and split it into sentences
     then it will replace named entities with [mask] token and remove the platform name and urls
     finally it will return the embeddings of the sentences and the metadata as a dataframe
     with columns: platform, year, sentence
-    
+
     Arguments:
         data: str, folder name
         nlp: spacy model
         model: sentence transformer model
+        prefix: text prefix to prepend before encoding, matching the
+            embedding model's expected task-instruction convention (see
+            EMBEDDING_MODELS / load_embedding_model)
     Returns:
         tuple: embeddings, metadata
 
@@ -119,7 +170,7 @@ def process_data(data : str, nlp, model) -> tuple:
             sentence_processed = remove_urls(sentence_processed) # remove urls
             metadata.append([platform,year,sentence,sentence_processed])
             sentence = remove_urls(str(sentence)) # remove urls
-            embeddings.append(model.encode("clustering:  " + sentence.lower()))
+            embeddings.append(model.encode(prefix + sentence.lower()))
 
     df = pd.DataFrame(metadata, columns=['platform','year','sentence','sentence_processed'])
     print(f'Embedded {len(df)} sentences...')
