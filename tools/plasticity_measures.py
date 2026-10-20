@@ -351,6 +351,161 @@ def document_perplexity(sentences, model, tokenizer, max_perplexity=1000.0):
     return float(np.clip(perplexity, 0.0, max_perplexity))
 
 
+def _space_initial_mask(tokenizer, vocab_size: int) -> torch.Tensor:
+    """Boolean mask over the vocabulary: True for tokens that start a new word.
+
+    GPT-2-style BPE marks a leading space with 'Ġ', so these are the tokens
+    that can begin a word anywhere except at the very start of a text.
+    """
+    mask = torch.zeros(vocab_size, dtype=torch.bool)
+    for token, idx in tokenizer.get_vocab().items():
+        if idx < vocab_size and token.startswith("Ġ"):
+            mask[idx] = True
+    return mask
+
+
+def _entropy_bits(logits: torch.Tensor, alpha: float = 1.0) -> torch.Tensor:
+    """Shannon (alpha=1) or Rényi entropy in bits of softmax(logits) over the last axis."""
+    log_p = torch.log_softmax(logits, dim=-1)
+    if alpha == 1.0:
+        return -(log_p.exp() * log_p).sum(-1) / np.log(2)
+    return torch.logsumexp(alpha * log_p, dim=-1) / np.log(2) / (1.0 - alpha)
+
+
+def sentence_first_token_entropy(
+    sentences,
+    model,
+    tokenizer,
+    alpha: float = 1.0,
+    unrestricted: bool = False,
+    batch_size: int = 16,
+    device=None,
+    return_word_entropies: bool = False,
+):
+    """
+    First-token entropy of each word in each sentence, after Clark et al. (2025),
+    "How Well Does First-Token Entropy Approximate Word Entropy as a
+    Psycholinguistic Predictor?" (https://github.com/christian-clark/word-entropy).
+
+    Word entropy is the uncertainty of the model about which word comes next,
+    measured *before* the word is read. Because a word can span several
+    subword tokens, the exact value is expensive; first-token entropy
+    approximates it with the entropy of the next-token distribution,
+    restricted to tokens that can start a word:
+      - the first word of a text has no leading space, so its distribution
+        is restricted to tokens WITHOUT 'Ġ';
+      - every later word is restricted to tokens WITH 'Ġ'.
+    Entropy is only recorded at word-initial positions; tokens inside a
+    word, and punctuation not preceded by a space, are skipped.
+
+    This re-implements the logic of `first_token_entropy.py` from the repo
+    so it can run on a list of sentences in memory. Each sentence is scored
+    on its own (BOS + sentence, no surrounding context), like
+    `sentence_perplexity`.
+
+    Parameters
+    ----------
+    sentences : list of str
+    model, tokenizer : a GPT-2-style causal LM and its BPE tokenizer
+        (e.g. from `_load_lm("gpt2")`).
+    alpha : 1.0 for Shannon entropy, otherwise Rényi entropy of order alpha
+        (the paper also reports alpha=0.5).
+    unrestricted : if True, take the entropy over the full vocabulary
+        instead of the word-initial subset (the repo's --unrestricted flag).
+    batch_size : number of sentences per forward pass.
+    device : torch device; defaults to cuda, then mps, then cpu.
+    return_word_entropies : if True, also return the per-word entropies.
+
+    Returns
+    -------
+    pd.DataFrame with one row per sentence:
+        'first_token_entropy'    mean entropy (bits) over the sentence's words
+        'first_token_perplexity' 2 ** first_token_entropy, i.e. the effective
+                                 number of equally likely next words
+        'n_words'                number of word-initial positions scored
+        'word_entropies'         (optional) array of per-word entropies
+    Empty sentences get NaN and n_words = 0.
+    """
+    import pandas as pd
+
+    if device is None:
+        device = ("cuda" if torch.cuda.is_available()
+                  else "mps" if torch.backends.mps.is_available() else "cpu")
+    model = model.to(device)
+    vocab_size = model.get_output_embeddings().weight.shape[0]
+    space_mask = _space_initial_mask(tokenizer, vocab_size).to(device)
+    space_idx = torch.where(space_mask)[0]
+    nonspace_idx = torch.where(~space_mask)[0]
+    space_mask_np = space_mask.cpu().numpy()
+    bos_id = tokenizer.bos_token_id
+    pad_id = tokenizer.eos_token_id
+    max_length = _get_tokenizer_max_length(tokenizer)
+
+    # Each sentence is scored without context, so identical sentences get
+    # identical scores: score every unique sentence once and map back.
+    texts = [s.strip() if isinstance(s, str) else "" for s in sentences]
+    unique_texts, inverse = np.unique(texts, return_inverse=True)
+
+    # Tokenise once, prepend BOS, and sort by length so batches need little padding.
+    encoded = [
+        [bos_id] + tokenizer(s, truncation=True, max_length=max_length - 1)["input_ids"]
+        if s else [bos_id]
+        for s in unique_texts
+    ]
+    order = np.argsort([len(ids) for ids in encoded])
+    unique_entropies = [np.array([]) for _ in unique_texts]
+
+    with torch.no_grad():
+        for start in range(0, len(order), batch_size):
+            batch_idx = [i for i in order[start:start + batch_size] if len(encoded[i]) > 1]
+            if not batch_idx:
+                continue
+            # Input is every token but the last; the logits at position t give
+            # the distribution over token t + 1 (the word about to be read).
+            inputs = [encoded[i][:-1] for i in batch_idx]
+            # Round the width up to a multiple of 32: GPUs (notably Apple's MPS)
+            # recompile for every new input shape, which is very slow.
+            width = max(len(x) for x in inputs)
+            width = min(int(np.ceil(width / 32) * 32), max_length)
+            input_ids = torch.full((len(inputs), width), pad_id, dtype=torch.long)
+            attention = torch.zeros((len(inputs), width), dtype=torch.long)
+            for row, x in enumerate(inputs):
+                input_ids[row, :len(x)] = torch.tensor(x)
+                attention[row, :len(x)] = 1
+            # Right padding leaves the real positions' logits unchanged in a causal LM.
+            logits = model(input_ids=input_ids.to(device),
+                           attention_mask=attention.to(device)).logits.float()
+
+            # Entropies for the whole batch at once, shape (batch, width).
+            if unrestricted:
+                ent = _entropy_bits(logits, alpha)
+            else:
+                # Position 0 predicts the first word (no leading space);
+                # later positions predict words that start with 'Ġ'.
+                first = _entropy_bits(logits[:, :1].index_select(-1, nonspace_idx), alpha)
+                rest = _entropy_bits(logits[:, 1:].index_select(-1, space_idx), alpha)
+                ent = torch.cat([first, rest], dim=1)
+            ent = ent.cpu().numpy()
+
+            for row, i in enumerate(batch_idx):
+                targets = np.array(encoded[i][1:])
+                # Keep only positions where the next token starts a word.
+                is_initial = space_mask_np[targets]
+                is_initial[0] = True
+                unique_entropies[i] = ent[row, :len(targets)][is_initial]
+
+    word_entropies = [unique_entropies[j] for j in inverse]
+    mean_entropy = np.array([w.mean() if len(w) else np.nan for w in word_entropies])
+    result = pd.DataFrame({
+        "first_token_entropy": mean_entropy,
+        "first_token_perplexity": 2.0 ** mean_entropy,
+        "n_words": [len(w) for w in word_entropies],
+    })
+    if return_word_entropies:
+        result["word_entropies"] = word_entropies
+    return result
+
+
 def contract_reading_effort_density(
     X_texts: list[str],
     X_embeddings: np.ndarray,

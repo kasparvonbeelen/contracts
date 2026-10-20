@@ -14,8 +14,9 @@ Typical use:
         cache_dir='processed_data/references_cache')
 
 The rules below were written after reading a sample of three contracts per
-platform (earliest, middle and latest version). The extraction is
-rule-based, so it errs in known ways:
+platform (earliest, middle and latest version) and revised after checking a
+second, random sample of three further contracts per platform. The
+extraction is rule-based, so it errs in known ways:
   * a named document is only found when it is written in Title Case
     ('Community Guidelines') or belongs to the lexicon of common document
     types (KNOWN_DOCUMENTS, matched in any case: 'our privacy policy');
@@ -95,38 +96,54 @@ AFFILIATES = {
     "venmo": ["paypal"], "twitch": ["amazon"], "tiktok": ["bytedance", "capcut"],
     "capcut": ["bytedance", "tiktok"], "wechat": ["tencent"], "match": ["tinder", "hinge", "match group"],
     "tinder": ["match group", "match"], "hinge": ["match group", "match"], "bumble": ["badoo"],
+    "linkedin": ["slideshare", "microsoft"], "twitter": ["periscope", "vine"],
 }
 # Other companies whose documents contracts cite; together with the platform
 # names (folder names and OWN_BRANDS) they mark a document as someone else's.
 OTHER_BRANDS = ["google", "youtube", "twitter", "apple", "amazon", "paypal", "stripe", "synchrony", "bancorp",
-                "automattic", "key-systems", "bytedance", "tencent", "microsoft", "runway"]
+                "automattic", "key-systems", "bytedance", "tencent", "microsoft", "runway", "tmg", "dosh",
+                "american express", "visa", "mastercard"]
 THIRD_PARTY = re.compile(
     r"\b(?:aaa'?s?|american arbitration|jams'?s?|nams?|adr services|siac|lcia|hkiac|icc|"
     r"singapore international|hong kong international|"
-    r"apple|app store|google play|amazon|appstore|mastercard|american express|visa|gnu|creative commons|mit|"
+    r"apple|app store|google play|amazon|appstore|gnu|creative commons|mit|"
     r"apache|creativeml|openrail|runway|federal trade|ftc|card scheme|payment processors?|registrar|"
-    r"domain registration|third[- ]party|app distributor)\b")
+    r"domain registration|third[- ]party|app distributors?|optional rules|supplementary procedures)\b")
 
 # Head words that end a document name. Strong heads name a document on their
 # own ('Community Guidelines'); weak heads ('Agreement', 'Notice', 'License')
 # usually name a part of the contract, so they need a QUALIFIER.
 STRONG_HEADS = (r"terms(?: of (?:service|use|sale))?(?: and conditions)?|polic(?:y|ies)|guidelines|standards|"
-                r"rules|principles|code of conduct|faqs?|eula|charter")
+                r"rules(?: (?:and|&|&amp;) procedures)?|principles|code of conduct|faqs?|eula|charter")
 WEAK_HEADS = (r"agreements?|conditions|licen[cs]es?|notices?|statements?|addend(?:um|a)|"
-              r"disclosures?|guides?|cent(?:er|re)")
+              r"disclosures?|guides?|cent(?:er|re)|procedures|program(?:me)?s?")
+# Heads after which a run-on heading may start a new name ('Privacy Policy Acceptable Use Policy');
+# not 'Centre' ('Hong Kong International Arbitration Centre Administered Arbitration Rules').
+SPLIT_HEADS = STRONG_HEADS + r"|agreements?|addend(?:um|a)|statements?|notices?"
 HEADS = STRONG_HEADS + "|" + WEAK_HEADS
 QUALIFIER = re.compile(
-    r"\b(?:privacy|cookies?|developer|api|publisher|registrar|registration|cardholder|card|credit|wallet|"
+    r"\b(?:privacy|cookies?|developer|api|publisher|registrar|registration agreement|cardholder|card|credit|wallet|"
     r"commercial|master services|stored credential|billing|software|materials|merchant|seller|"
     r"data processing|data protection|gnu|general public|creative commons|mit|apache|openrail|open source|"
     r"help|safety|transparency|e-sign|electronic (?:communications|disclosures?)|operating|"
-    r"business accounts?|services agreement|"
+    r"business accounts?|services? agreement|licen[cs]e agreement|\w+ user (?:service )?agreement|"
+    r"copyright cent(?:er|re)|disclosures guide|endorsement guides?|supplementary procedures|"
+
     r"mastercard|american express|domain|consumer rights|vat|tax)\b")
 
-# Title-Case names: up to six capitalised words (lower-case connectors allowed) and a head word.
+# Programs are documents only when they come with terms of their own.
+PROGRAM_QUALIFIER = re.compile(
+    r"\b(?:partner|referral|vulnerability reporting|bug bounty|purchase protection|seller protection|purchase|"
+    r"rewards|loyalty|creator|ambassador|monetization|beta) program")
+
+# Title-Case names: up to eight capitalised words (lower-case connectors allowed) and a head word.
 _WORD = r"[A-Z][\w'&.-]*"
 _JOIN = r"(?:,? (?:and|&|of|for|on|to|the|in) |, | )"
-NAMED_DOC = re.compile(r"\b((?:" + _WORD + _JOIN + r"){0,6}(?i:" + HEADS + r"))\b")
+NAMED_DOC = re.compile(r"\b((?:" + _WORD + _JOIN + r"){0,8}(?i:" + HEADS + r"))\b")
+# Rules named after their institution: 'Arbitration Rules of the Singapore International Arbitration Centre'.
+RULES_OF = re.compile(r"\b((?:[A-Z][\w'-]* ){0,3}(?:Rules|Procedures) of (?:the )?"
+                      r"(?=(?:[A-Z][\w'-]* ){0,5}(?:Arbitration|Association|Cent(?:er|re)|Chamber|Institute|"
+                      r"Mediation|Forum|JAMS|ADR))(?:[A-Z][\w'-]*(?: |$|(?=[,.;)]))){2,7})")
 
 # Common document types, matched in any case ('our privacy policy').
 KNOWN_DOCUMENTS = re.compile(
@@ -136,7 +153,8 @@ KNOWN_DOCUMENTS = re.compile(
     r"usage rules|help cent(?:er|re)|safety cent(?:er|re)|code of conduct|refund policy|"
     r"cancellation policy|payment terms|terms of sale|developer (?:agreement|policy|terms)|"
     r"api terms(?: of use)?|advertising (?:policies|guidelines)|ads? policies|commercial terms|"
-    r"branded content policy|music guidelines)\b", re.I)
+    r"branded content policy|music guidelines|card scheme rules|supplementary procedures for "
+    r"consumer[- ]related disputes)\b", re.I)
 
 # Open-ended references: they name no particular document.
 GENERIC_DOC = re.compile(
@@ -158,6 +176,7 @@ GENERIC_NAME = re.compile(
 SELF_NAME = re.compile(
     r"^(?:(?:updated|revised|new|amended|modified|final|general|legal|current|complete|whole|following|"
     r"applicable|entire|binding|these|this|the|our|your|previous|prior|key|other legal|miscellaneous|"
+    r"site|website|service|legally binding|"
     r"archive of (?:previous|prior)|summary of key)\s+)*"
     r"(?:terms|terms of (?:service|use)|terms and conditions(?: of use)?|terms of (?:service|use) agreement|"
     r"(?:user |customer |member )?agreement|conditions(?: of use)?|statement of rights and responsibilities|"
@@ -166,10 +185,17 @@ INTERNAL_NAME = re.compile(
     r"^(?:(?:special|specific|country|state|special state|special country|dispute|final|basic|arbitration|"
     r"limited|content|subscriber|user content|ip|scope of|duration of|transfer of|your|our)\s+)+"
     r"(?:terms|rules|license|agreement|notice)$|"
-    r"^(?:changes?|updates?|agreement|acceptance|ability|survival|applicability|scope|duration|transfer|"
-    r"termination|modifications?|amendments?|usage|dispute|eligibility|age|interpretation|ending|"
+    r"^(?:changes?|updates?|agreement to|acceptance|ability|survival|applicability|scope|duration|transfer|"
+    r"termination|modifications?|amendments?|usage of|dispute|eligibility|age|interpretation|ending|"
     r"severability|relation|capitalized|waiver|resolving|excluded|limitation|governing|jurisdiction|"
-    r"class action|table of contents|use restrictions|that may apply)\b")
+    r"class action|table of contents|use restrictions|that may apply|notification|mass filings?|"
+    r"terms of (?:use|service) for|"
+    r"arbitration procedures)\b")
+# Section-heading words that glue onto a following name ('Eligibility Account and Registration Licenses',
+# 'Violate SlideShare's Community Guidelines'): the name starts after the last of them.
+HEADING_WORDS = {"prohibitions", "termination", "eligibility", "capacity", "contents", "documents",
+                 "dos", "donts", "waiver", "conducting", "violate", "violates", "using", "accessing", "users",
+                 "deactivation", "ownership"}
 
 URL = re.compile(r"https?://[^\s)\]]+")
 LEADING_NOISE = re.compile(
@@ -198,8 +224,9 @@ CATEGORIES = [
     ("privacy", r"privacy|cookie|data polic|data processing|data protection|data use|personal information|"
                 r"ccpa|consumer rights"),
     ("dispute resolution", r"arbitra|\baaa|\bjams|\bnams?\b|adr services|dispute resolution|mass filing|mediation|"
-                           r"\bsiac\b|\blcia\b|\bicc\b|optional rules"),
-    ("law enforcement & compliance", r"law enforcement|government|sanction|security|data request|transparency notice"),
+                           r"\bsiac\b|\blcia\b|\bicc\b|optional rules|supplementary procedures|consumer[- ]related disputes"),
+    ("law enforcement & compliance", r"law enforcement|government|sanction|security|data request|transparency notice|"
+                                     r"vulnerability|bug bounty"),
     ("ai features", r"\bai\b|generative|chatbot|avatar|machine learning"),
     ("app stores & third-party services", r"apple|app store|appstore|google play|amazon|third[- ]party|"
                                           r"payment processor|registrar|registration agreement|app distributor"),
@@ -210,7 +237,7 @@ CATEGORIES = [
     ("commerce & payments", r"payment|purchas|refund|cancellation|\bsale\b|subscription|virtual|billing|card|wallet|"
                             r"merchant|seller|buyer|commerc|paid|credit|\btax\b|\bvat\b|fee|pricing|stash|business|"
                             r"electronic disclosure|e-sign|money|rewards|monetization|earn|econ|charity|crypto|referral|"
-                            r"\bach\b|nacha"),
+                            r"\bach\b|nacha|operating guide|partner program|loyalty"),
     ("community & conduct", r"communit|acceptable use|content|usage|conduct|safety|guidelines|rules|standards|"
                             r"moderator|profile|fair us|reasonable use|spam|manipulation|appeal|complaint|reporting|"
                             r"username|termination|strike|recommendation|principles|inactive|groups?\b|events|\blive\b|"
@@ -275,8 +302,10 @@ def _normalise(name: str) -> str:
     key = name.lower().replace("'", "").replace("’", "")
     key = re.sub(r"\blicence", "license", key)
     key = re.sub(r"\bcentre\b", "center", key)
+    key = re.sub(r"\bprogramme", "program", key)
     key = re.sub(r"\bcookies\b", "cookie", key)
     key = re.sub(r"\b(aaa|jams|nam|ftc)s\b", r"\1", key)  # possessives without apostrophe: 'AAAs rules'
+    key = re.sub(r"\brules (?:and|&|&amp;) procedures\b", "rules", key)  # 'JAMS Streamlined Arbitration Rules & Procedures'
     key = re.sub(r"\b(agreement|license|addend|guide|notice|statement|disclosure)(?:s|a)$",
                  lambda m: m.group(1) + ("um" if m.group(1) == "addend" else ""), key)
     return re.sub(r"\s+", " ", key).strip(" .,;:")
@@ -294,6 +323,19 @@ def _strip_brand(key: str, brands: list) -> tuple:
     return key, False
 
 
+def _strip_prefix(raw: str) -> str:
+    """Drop sentence and heading text in front of a name."""
+    raw = LEADING_NOISE.sub("", raw.strip(" ,"))
+    # Keep what follows the last determiner: 'Miscellaneous These Terms' -> 'Terms'.
+    raw = DETERMINER.split(raw)[-1]
+    raw = CONNECTOR.sub("", raw)
+    # ... and what follows the last heading word, if two or more words follow it
+    # ('Eligibility Account and Registration Licenses'; but 'Account Termination Policy' stays).
+    words = raw.split()
+    cut = max((i for i, w in enumerate(words[:-2]) if w.lower().strip(",") in HEADING_WORDS), default=-1)
+    return CONNECTOR.sub("", " ".join(words[cut + 1:]))
+
+
 def _clean_candidate(raw: str) -> list:
     """Turn a raw Title-Case match into zero or more candidate names."""
     tokens = raw.split()
@@ -305,34 +347,32 @@ def _clean_candidate(raw: str) -> list:
         raw = " ".join(tokens[caps:])
     # Navigation text glued to a name: 'Go to Medium Policy', 'Welcome to Bumbles Terms'.
     raw = NAVIGATION.split(raw)[-1]
-    raw = LEADING_NOISE.sub("", raw.strip(" ,"))
-    # Keep what follows the last determiner: 'Miscellaneous These Terms' -> 'Terms'.
-    raw = DETERMINER.split(raw)[-1]
-    raw = CONNECTOR.sub("", raw)
-    # A brand after the first word starts the name: 'Privacy Reddits Privacy Policy'.
-    words = raw.split()
-    for i in range(1, len(words)):
-        if _is_brand_start(" ".join(words[i:]).lower()):
-            raw = " ".join(words[i:])
-            break
-    # 'Terms of Service, Privacy Policy' -> two names; 'Terms of Service and Privacy Policy' too,
+    # 'Terms of Service, the Privacy Policy' -> two names; 'Terms of Service and Privacy Policy' too,
     # but not 'Rules and Policies' or 'Pages, Groups and Events Policy'.
     ends_in_head = lambda p: re.search(r"(?i:" + HEADS + r")$", p) is not None
-    parts = [p for p in re.split(r",\s*(?:and\s+)?", raw)]
+    parts = [p for p in re.split(r",\s*(?:and\s+)?", raw) if p.strip()]
     if len(parts) > 1 and not all(ends_in_head(p) for p in parts):
         parts = [raw]
     names = []
     for part in parts:
-        halves = part.split(" and ", 1)
+        part = _strip_prefix(part)
+        halves = re.split(r" (?i:and) ", part, maxsplit=1)
         if len(halves) == 2 and ends_in_head(halves[0]) and ends_in_head(halves[1]) and len(halves[1].split()) >= 2:
-            names += halves
+            names += [_strip_prefix(h) for h in halves]
         else:
             names.append(part)
     # Headings run together: 'Privacy Policy Acceptable Use Policy' -> two names.
     split = []
     for name in names:
-        split += re.sub(r"\b((?i:" + HEADS + r"))\s+(?=[A-Z])", "\\1\x00", name).split("\x00")
-    return [n.strip() for n in split if n.strip()]
+        split += re.sub(r"\b((?i:" + SPLIT_HEADS + r"))\s+(?=[A-Z])(?!(?:And|Or|Of|For|On|To)\b)",
+                        "\\1\x00", name).split("\x00")
+    # A brand after the first word starts the name: 'Privacy Reddits Privacy Policy'.
+    out = []
+    for name in split:
+        words = name.split()
+        start = next((i for i in range(1, len(words)) if _is_brand_start(" ".join(words[i:]).lower())), 0)
+        out.append(" ".join(words[start:]).strip(" ,"))
+    return [n for n in out if n]
 
 
 def _classify_name(name: str, platform: str, from_lexicon: bool) -> tuple:
@@ -345,11 +385,16 @@ def _classify_name(name: str, platform: str, from_lexicon: bool) -> tuple:
         return None, None
     if GENERIC_NAME.match(key):
         return re.sub(r"^(?:(?:any|all|such|our|its|the)\s+)+", "", key), "generic"
+    if RULES_OF.fullmatch(name) or (from_lexicon and KNOWN_DOCUMENTS.fullmatch(name) and not had_brand):
+        return key, "named"
     other_brand = None if had_brand else _brand_prefix(key, _all_brands())
     head = re.search(r"(?:" + HEADS + r")$", bare)
     if head is None:
         return None, None
-    if re.fullmatch(r"(?:" + WEAK_HEADS + r")", head.group(0)) and not QUALIFIER.search(bare) \
+    if re.fullmatch(r"programs?|programmes?", head.group(0)):
+        if not PROGRAM_QUALIFIER.search(_normalise(bare).replace("programme", "program")):
+            return None, None
+    elif re.fullmatch(r"(?:" + WEAK_HEADS + r")", head.group(0)) and not QUALIFIER.search(bare) \
             and not KNOWN_DOCUMENTS.fullmatch(bare):
         return None, None
     single_head = bare == head.group(0) and " " not in bare
@@ -362,8 +407,8 @@ def _classify_name(name: str, platform: str, from_lexicon: bool) -> tuple:
         elif rest == head.group(0) and " " not in rest and name.split()[-1].islower():
             # 'TikToks policy', 'Zoom policies': a lower-case head after a brand is generic.
             return f"{brand} {rest}", "generic"
-    elif single_head:
-        # A bare head word ('Policies', 'Guidelines') names no particular document.
+    elif single_head and bare not in ("faq", "faqs"):
+        # A bare head word ('Policies', 'Guidelines') names no particular document; 'FAQ' does.
         return None, None
     return key, "named"
 
@@ -402,6 +447,8 @@ def _sentence_candidates(sent: str, platform: str) -> list:
             spans.append((m.start(1), m.end(1), m.group(1), False))
     for m in KNOWN_DOCUMENTS.finditer(sent):
         spans.append((m.start(1), m.end(1), m.group(1), True))
+    for m in RULES_OF.finditer(sent):
+        spans.append((m.start(1), m.end(1), m.group(1).strip(), True))
     for m in GENERIC_DOC.finditer(sent):
         spans.append((m.start(1), m.end(1), m.group(1), True))
     spans.sort(key=lambda s: (s[0] - s[1], s[0]))
